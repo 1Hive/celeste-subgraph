@@ -1,5 +1,6 @@
 import { Address, BigInt } from '@graphprotocol/graph-ts'
 import { Transfer as TransferEvent } from '../types/templates/ANJ/ANJ'
+import { ANJ as ANJTokenContract } from '../types/templates/ANJ/ANJ'
 import { ANJBalance as Balance, ANJTransfer as Transfer } from '../types/schema'
 
 export function handleTransfer(event: TransferEvent): void {
@@ -14,24 +15,28 @@ export function handleTransfer(event: TransferEvent): void {
     transfer.createdAt = event.block.timestamp
     transfer.save()
 
-    let sender = loadOrCreateBalance(event.params._from)
+    let previousBlock = event.block.number.minus(BigInt.fromI32(1))
+
+    let sender = loadOrCreateBalance(event.address, event.params._from, previousBlock)
     sender.amount = sender.amount.minus(event.params._amount)
     sender.save()
 
-    let recipient = loadOrCreateBalance(event.params._to)
+    let recipient = loadOrCreateBalance(event.address, event.params._to, previousBlock)
     recipient.amount = recipient.amount.plus(event.params._amount)
     recipient.save()
   }
 }
 
-function loadOrCreateBalance(owner: Address): Balance | null {
+function loadOrCreateBalance(tokenAddress: Address, owner: Address, previousBlock: BigInt): Balance | null {
   let id = owner.toHexString()
   let balance = Balance.load(id)
 
   if (balance === null) {
     balance = new Balance(id)
     balance.owner = owner
-    balance.amount = new BigInt(0)
+    
+    let tokenContract = ANJTokenContract.bind(tokenAddress)
+    balance.amount = _getBalanceOfAt(tokenContract, owner, previousBlock)
   }
 
   return balance
@@ -40,4 +45,13 @@ function loadOrCreateBalance(owner: Address): Balance | null {
 function isTransferMissing(id: string): boolean {
   let transfer = Transfer.load(id)
   return transfer === null
+}
+
+function _getBalanceOfAt(tokenContract: ANJTokenContract, holderAddress: Address, blockNumber: BigInt): BigInt {
+  let callResult = tokenContract.try_balanceOfAt(holderAddress, blockNumber)
+  if (callResult.reverted) {
+    return BigInt.fromI32(0)
+  } else {
+    return callResult.value
+  }
 }
